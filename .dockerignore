@@ -1,0 +1,9 @@
+models/
+data/
+**/.venv/
+**/__pycache__/
+.git/
+.agent/
+.claude/
+CLAUDE.md
+*.gguf

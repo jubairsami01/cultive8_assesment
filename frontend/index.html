@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Log Analyzer</title>
+  <meta name="description" content="Find possible attacks in server logs with a local AI model. Runs offline.">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><path d='M16 2 4 7v8c0 7.5 5.1 13.7 12 15 6.9-1.3 12-7.5 12-15V7z' fill='%232f6fdf'/></svg>">
+  <link rel="stylesheet" href="styles.css?v=2">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="topbar">
+  <div class="brand">
+    <svg aria-hidden="true" viewBox="0 0 32 32" width="26" height="26"><path d="M16 2 4 7v8c0 7.5 5.1 13.7 12 15 6.9-1.3 12-7.5 12-15V7z" fill="currentColor"/><path d="m11 16 3.5 3.5L21.5 12" stroke="var(--surface)" stroke-width="2.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    <div>
+      <h1>Log Analyzer</h1>
+      <p class="tagline">Finds possible attacks with a local AI model. Your logs never leave this machine.</p>
+    </div>
+  </div>
+  <div class="sys" aria-label="System status">
+    <span class="pill" id="modelPill"><span class="dot" aria-hidden="true"></span><span id="modelText">Checking model…</span></span>
+    <div class="ram" title="Memory used by the model and the app, out of the 4 GB limit">
+      <span class="ram-label">RAM <b id="ramText">–</b></span>
+      <span class="meter" aria-hidden="true"><span id="ramBar"></span></span>
+    </div>
+  </div>
+</header>
+
+<nav class="steps" aria-label="Progress">
+  <ol>
+    <li id="step1" aria-current="step"><span class="num">1</span> Upload</li>
+    <li id="step2"><span class="num">2</span> Analyze</li>
+    <li id="step3"><span class="num">3</span> Review report</li>
+  </ol>
+</nav>
+
+<main id="main" tabindex="-1">
+  <!-- Live regions (screen readers) -->
+  <div class="sr-only" aria-live="polite" id="announce"></div>
+  <div class="sr-only" aria-live="assertive" id="announceUrgent"></div>
+
+  <!-- ===== 1. Upload ===== -->
+  <section id="viewUpload" class="card" aria-labelledby="uploadTitle">
+    <h2 id="uploadTitle">Upload a server log</h2>
+    <p class="muted">Accepted: <b>.log</b> or <b>.txt</b> text files up to <b id="maxMb">20</b> MB. JSON lines, Apache/Nginx and plain-text logs work.</p>
+
+    <div class="drop" id="drop">
+      <svg aria-hidden="true" viewBox="0 0 24 24" width="40" height="40"><path d="M12 16V4m0 0-4 4m4-4 4 4M4 16v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <p class="drop-title">Drag a log file here</p>
+      <p class="muted">or</p>
+      <label class="btn secondary" for="fileInput">Choose a file</label>
+      <input id="fileInput" type="file" accept=".log,.txt,text/plain" class="visually-hidden-input">
+    </div>
+
+    <div id="fileChosen" class="file-chosen" hidden>
+      <svg aria-hidden="true" viewBox="0 0 24 24" width="28" height="28"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z M14 3v5h5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>
+      <div class="grow">
+        <div class="fname" id="fileName"></div>
+        <div class="muted small" id="fileMeta"></div>
+      </div>
+      <button class="btn ghost" id="changeFile" type="button">Change</button>
+    </div>
+
+    <div id="uploadError" class="alert error" role="alert" hidden></div>
+
+    <div class="actions">
+      <button class="btn primary" id="startBtn" type="button" disabled>Start analysis</button>
+      <span class="muted small" id="startHint">Choose a file to continue.</span>
+    </div>
+
+    <details class="how">
+      <summary>How does it work?</summary>
+      <ol>
+        <li>The log is split into parts that fit the model's 2,048-token window. Line numbers are kept and entries are never cut.</li>
+        <li>The local model reads one part at a time. Facts from earlier parts (for example, failed logins by an IP) are carried forward so events far apart in the file get linked.</li>
+        <li>Findings are saved after every part, then merged into one report with evidence line numbers.</li>
+      </ol>
+      <p class="muted small">Text inside the log is treated as data only. Instructions written in a log are never followed.</p>
+    </details>
+  </section>
+
+  <!-- ===== 2. Progress ===== -->
+  <section id="viewProgress" class="card" aria-labelledby="progTitle" hidden>
+    <div class="row between">
+      <h2 id="progTitle">Analyzing <span id="progFile" class="fname-inline"></span></h2>
+      <button class="btn ghost danger" id="cancelBtn" type="button">Stop</button>
+    </div>
+    <p class="stage" id="stageText">Starting…</p>
+
+    <div class="progress-wrap">
+      <div class="progress" role="progressbar" aria-labelledby="progTitle" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="progBar"><span></span></div>
+      <div class="progress-meta">
+        <span id="progPct">0%</span>
+        <span id="progParts">–</span>
+        <span id="progEta"></span>
+      </div>
+    </div>
+
+    <div class="kpis small-kpis">
+      <div><span class="k" id="kFindings">0</span><span class="l">findings so far</span></div>
+      <div><span class="k" id="kTokens">–</span><span class="l">tokens after compaction</span></div>
+      <div><span class="k" id="kAvg">–</span><span class="l">avg time per part</span></div>
+    </div>
+
+    <h3 class="sub">Parts</h3>
+    <p class="muted small">Each square is one model call. Hover or focus a square for details.</p>
+    <ol class="parts" id="parts" aria-label="Parts of the log"></ol>
+
+    <div id="progError" class="alert error" role="alert" hidden></div>
+    <p class="muted small">You can close this page. The analysis continues in the background and resumes automatically after a restart.</p>
+  </section>
+
+  <!-- ===== 3. Report ===== -->
+  <section id="viewReport" hidden aria-labelledby="repTitle">
+    <div class="card">
+      <div class="row between wrap">
+        <div>
+          <h2 id="repTitle">Report</h2>
+          <p class="muted" id="repMeta"></p>
+        </div>
+        <div class="row gap">
+          <a class="btn secondary" id="dlMd" download>Download Markdown</a>
+          <a class="btn secondary" id="dlJson" download>Download JSON</a>
+          <button class="btn primary" id="newBtn" type="button">Analyze another file</button>
+        </div>
+      </div>
+
+      <div id="repWarn" class="alert warn" hidden></div>
+
+      <div class="summary">
+        <h3 class="sub">Summary <span class="badge-src" id="sumSrc"></span></h3>
+        <p id="sumText"></p>
+        <div id="prioWrap" hidden>
+          <h4>Do this first</h4>
+          <ol id="prioList"></ol>
+        </div>
+      </div>
+
+      <div class="sev-tiles" role="group" aria-label="Filter by severity" id="sevTiles"></div>
+    </div>
+
+    <div class="card" id="chainsCard" hidden>
+      <h3 class="sub">Attackers and what they did</h3>
+      <p class="muted small">Findings grouped by source. Events are linked across the whole file, in order of first appearance.</p>
+      <ul class="chains" id="chains"></ul>
+    </div>
+
+    <div class="card">
+      <div class="row between wrap">
+        <h3 class="sub" id="findTitle">Findings</h3>
+        <div class="row gap">
+          <label class="sr-only" for="search">Search findings</label>
+          <input id="search" type="search" placeholder="Search IP, type or text…" autocomplete="off">
+          <button class="btn ghost" id="clearFilters" type="button" hidden>Clear filters</button>
+        </div>
+      </div>
+      <ul class="findings" id="findings"></ul>
+      <p class="empty" id="noFindings" hidden>No findings match.</p>
+    </div>
+
+    <div class="card">
+      <details id="unconfDetails">
+        <summary>Signals the model did not confirm <span class="count" id="unconfCount"></span></summary>
+        <p class="muted small">Pattern hints that the AI did not judge to be attacks. Shown for transparency. They are not confirmed findings.</p>
+        <ul class="plain" id="unconfList"></ul>
+      </details>
+      <details>
+        <summary>Run details: token budget, timing, model calls</summary>
+        <div id="runDetails"></div>
+      </details>
+    </div>
+  </section>
+
+  <!-- ===== History ===== -->
+  <section class="card" id="historyCard" hidden aria-labelledby="histTitle">
+    <h2 id="histTitle" class="sub">Recent analyses</h2>
+    <ul class="history" id="history"></ul>
+  </section>
+</main>
+
+<footer class="foot">
+  <span id="footModel">Local model</span> · offline · one model call at a time · 2,048-token window
+</footer>
+
+<template id="tplFinding">
+  <li class="finding">
+    <div class="f-head">
+      <span class="sev"></span>
+      <h4 class="f-title"></h4>
+      <span class="f-ip"><span class="sr-only">Source </span><code></code><button class="icon-btn copy" type="button" aria-label="Copy IP">⧉</button></span>
+    </div>
+    <p class="f-reason"></p>
+    <p class="f-action"><b>Suggested action:</b> <span></span></p>
+    <div class="f-meta muted small"></div>
+    <details class="evidence">
+      <summary>Show evidence <span class="ev-count"></span></summary>
+      <div class="ev-body" aria-live="polite"><p class="muted small">Loading lines…</p></div>
+    </details>
+  </li>
+</template>
+
+<script src="app.js?v=2" defer></script>
+</body>
+</html>

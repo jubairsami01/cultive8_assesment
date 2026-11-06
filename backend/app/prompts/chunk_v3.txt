@@ -1,0 +1,8 @@
+Part {part} of {parts}, lines {line_start}-{line_end}.
+Known from earlier parts:
+{carry}
+Tagged entries to review in this part:
+{review}
+<log>
+{log}
+</log>

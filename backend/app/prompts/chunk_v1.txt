@@ -1,0 +1,6 @@
+Part {part} of {parts}, lines {line_start}-{line_end}.
+Known from earlier parts:
+{carry}
+<log>
+{log}
+</log>

@@ -1,0 +1,73 @@
+# Local AI Security Log Analyzer
+# Resource envelope (matches the brief): 4 GB RAM total, 2 vCPU, no GPU.
+#   llm  : 3072 MB hard limit  (model ~1.3 GB + KV cache for a 2,048 context)
+#   api  : 1024 MB hard limit  (FastAPI + SQLite, streams files, never loads them whole)
+#   ----- 4096 MB total, swap disabled (memswap_limit == mem_limit)
+# Both services share the same 2 CPU cores (cpuset "0,1"), so together they can never use
+# more than 2 vCPU.
+
+name: log-analyzer
+
+services:
+  llm:
+    image: ghcr.io/ggml-org/llama.cpp:server-b12169   # pinned build, CPU only, linux/amd64 + arm64
+    command:
+      - --model
+      - /models/${MODEL_FILE:-Qwen3.5-2B-Q4_K_M.gguf}
+      - --ctx-size
+      - "2048"            # hard per-call context = the brief's limit
+      - --parallel
+      - "1"               # one slot -> one request at a time, one KV cache
+      - --threads
+      - "2"
+      - --threads-batch
+      - "2"
+      - --batch-size
+      - "512"
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8080"
+      - --no-webui
+      - --jinja
+      - --load-mode
+      - none              # no mmap: weights are read into process RAM, so the 3 GB limit counts them
+      - --cache-ram
+      - "0"               # disable the host-RAM prompt cache (default 8 GiB!) -> memory stays flat
+      - --ctx-checkpoints
+      - "0"               # no per-slot context checkpoints (also grow RAM with every request)
+    volumes:
+      - ./models:/models:ro
+    mem_limit: 3072m
+    memswap_limit: 3072m
+    cpuset: "0,1"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1:8080/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 30
+      start_period: 20s
+    # Not published to the host: only the api talks to the model.
+
+  api:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    environment:
+      LLM_URL: http://llm:8080
+      MODEL_NAME: ${MODEL_NAME:-Qwen3.5-2B-Q4_K_M}
+      PROMPT_VERSION: ${PROMPT_VERSION:-v3}
+      CALL_TIMEOUT_S: ${CALL_TIMEOUT_S:-240}
+    volumes:
+      - ./data:/data          # SQLite + uploads -> survives restarts (resume)
+    ports:
+      - "8000:8000"
+    mem_limit: 1024m
+    memswap_limit: 1024m
+    cpuset: "0,1"
+    pid: "service:llm"        # share the PID namespace so the dashboard can show model RAM
+    depends_on:
+      llm:
+        condition: service_healthy
+    restart: unless-stopped
