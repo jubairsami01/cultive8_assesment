@@ -66,17 +66,46 @@ Switch model or prompt version with env vars: `MODEL_FILE=… MODEL_NAME=… PRO
 
 ## How it works
 
+```mermaid
+flowchart TB
+    user(["Browser UI · upload a log · watch live progress"])
+
+    subgraph PREP["① Prepare (once per file)"]
+        direction LR
+        upload["Upload + validate<br/>.log/.txt · size · UTF-8<br/>streamed to disk"]
+        parse["Stream parse<br/>original line numbers<br/>entries never cut"]
+        signals["Signals + per-IP state<br/>failed logins · SQLi · recon<br/>traversal · rate · injection"]
+        compact["Compact + fold<br/>routine lines<br/>39,896 → 6,970 tokens"]
+        plan["Pack into parts<br/>measured with the<br/>model tokenizer"]
+        upload --> parse --> signals --> compact --> plan
+    end
+
+    subgraph LOOP["② Analyze (one part per call)"]
+        direction LR
+        prompt["Prompt ≤ 2,048 tokens<br/>rules · facts from earlier parts<br/>tagged entries · part text"]
+        model[["llama.cpp<br/>Qwen3.5 2B Q4_K_M<br/>CPU · JSON schema"]]
+        validate["Repair JSON + validate<br/>lines in part · IP in evidence<br/>split by evidence"]
+        db[("SQLite<br/>saved after each call<br/>resume on restart")]
+        prompt --> model --> validate --> db
+        db -. "carry facts + findings to next part" .-> prompt
+    end
+
+    subgraph COMBINE["③ Combine (once)"]
+        direction LR
+        merge["Merge across parts<br/>dedupe by type + IP<br/>link brute force → compromise"]
+        summary["Summary call<br/>checked against findings"]
+        report["Final report<br/>type · severity · IP<br/>evidence lines · reason · action"]
+        merge --> summary --> report
+    end
+
+    out(["Report in the browser · Markdown / JSON export"])
+    user ==> PREP ==> LOOP ==> COMBINE ==> out
 ```
-upload ──► stream parse ──► signals + per-IP state ──► compact lines ──► fold routine runs
-                                                                              │
-                     token-measured packing into parts (never split an entry) ◄┘
-                                                                              │
-   for each part (one call at a time):                                        ▼
-     prompt = system rules + carried facts (earlier parts) + tagged-entry list + part text
-     ──► llama.cpp (JSON schema) ──► repair/validate ──► save to SQLite immediately
-                                                                              │
-   merge: dedupe by (attack type, IP) ─► link across parts ─► incidents ─► summary call ─► report
-```
+
+**Deployment:** two containers on the same 2 CPU cores — `api` (FastAPI, SQLite, static UI;
+1 GB limit) and `llm` (llama.cpp server; 3 GB limit) — 4 GB total, no swap. Only the API talks to
+the model (`/tokenize`, `/apply-template`, `/v1/chat/completions`); the UI gets progress over
+Server-Sent Events.
 
 ### 1. Parsing and compaction
 - Formats: JSON lines, Apache/Nginx combined/common, free text. Continuation lines (stack
