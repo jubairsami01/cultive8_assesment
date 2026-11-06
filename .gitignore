@@ -1,0 +1,32 @@
+# --- Private coding-agent files (never commit) ---
+CLAUDE.md
+CLAUDE.local.md
+.claude/
+.agent/
+notes/private/
+*.agent.md
+
+# --- Model weights & runtime data ---
+models/
+*.gguf
+data/
+*.db
+*.db-journal
+uploads/
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# --- Env / OS / editor ---
+.env
+.env.*
+!.env.example
+.DS_Store
+.idea/
+.vscode/
