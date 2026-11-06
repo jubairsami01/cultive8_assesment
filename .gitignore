@@ -9,10 +9,10 @@ notes/private/
 # --- Model weights & runtime data ---
 models/
 *.gguf
-data/
-*.db
-*.db-journal
-uploads/
+# data/
+# *.db
+# *.db-journal
+# uploads/
 
 # --- Python ---
 __pycache__/
